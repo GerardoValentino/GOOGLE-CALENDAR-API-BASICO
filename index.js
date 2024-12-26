@@ -6,7 +6,7 @@ const schedule = require('node-schedule');
 const fs = require('fs');
 const app = express();
 
-const publicURL = "https://a2b6-2806-264-3400-ece-cd57-44b3-f889-15c6.ngrok-free.app";
+const publicURL = "https://a6c1-2806-264-3400-ece-705e-8da3-9431-9d1f.ngrok-free.app";
 
 app.use(bodyParser.json());
 const credentials = require('./credentials.json');
@@ -19,8 +19,37 @@ const oauth2Client = new google.auth.OAuth2(
 
 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
+async function getEventDetails(resourceId) {
+    try {
+        const response = await calendar.events.list({
+            calendarId: 'primary',
+            maxResults: 10,
+        });
+
+        const event = response.data.items.find((item) => item.id === resourceId);
+
+        console.log("EVENTOS @=> ", response.data.items);
+
+        if (!event) {
+            console.log('No se encontró un evento con el resourceId:', resourceId);
+            return null;
+        }
+
+        return {
+            id: event.id,
+            summary: event.summary,
+            description: event.description,
+            start: event.start.dateTime || event.start.date, // Fecha/hora de inicio
+            end: event.end.dateTime || event.end.date, // Fecha/hora de fin
+        };
+    } catch (error) {
+        console.error('Error al obtener detalles del evento:', error);
+        throw error;
+    }
+}
+
 // Configuración de webhook
-app.post('/notifications', (req, res) => {
+app.post('/notifications', async (req, res) => {
     try {
         const headers = req.headers;
 
@@ -32,19 +61,21 @@ app.post('/notifications', (req, res) => {
         console.log('X-Goog-Resource-State:', headers['x-goog-resource-state']);
         */
 
-        // Si es una sincronización inicial
-        if (headers['x-goog-resource-state'] === 'sync') {
-            console.log('Sincronización inicial recibida.');
-        } else if (headers['x-goog-resource-state'] === 'exists') {
-            console.log('Se creó o actualizó un recurso.');
-        } 
-        
-        /*
-        else if (headers['x-goog-resource-state'] === 'not_exists') {
-            console.log('Un recurso fue eliminado.');
-        } */
+        const resourceId = headers['x-goog-resource-id'];
+        const resourceState = headers['x-goog-resource-state'];
 
-        res.sendStatus(200); // Responde con éxito
+        if (resourceState === 'sync') {
+            console.log('Sincronización inicial recibida.');
+        } else if (resourceState === 'exists') {
+            console.log('Se creó o actualizó un recurso.');
+            const eventDetails = await getEventDetails(resourceId);
+            console.log('Detalles del evento:', eventDetails);
+        } else if (resourceState === 'not_exists') {
+            console.log('Un recurso fue eliminado.');
+            console.log('ID del recurso eliminado:', resourceId);
+        }
+
+        res.sendStatus(200);
     } catch(error) {
         console.log("Ocurrio un problema en el endpoint de /notifications ==> ", error);
         res.sendStatus(500);
@@ -132,7 +163,6 @@ app.get('/calendars', (req, res) => {
         }
 
         const calendars = response.data.items;
-        //res.json(calendars);
         res.setHeader('Content-Type', 'application/json');
         res.send(JSON.stringify(calendars, null, 2));
     });
@@ -163,7 +193,7 @@ app.get('/events', (req, res) => {
         res.setHeader('Content-Type', 'application/json');
         res.send(JSON.stringify(events, null, 2));
     });
-})
+});
 
 app.listen(3001, () => {
     console.log('Servidor escuchando en http://localhost:3001');
