@@ -6,7 +6,10 @@ const schedule = require('node-schedule');
 const fs = require('fs');
 const app = express();
 
-const publicURL = "https://a6c1-2806-264-3400-ece-705e-8da3-9431-9d1f.ngrok-free.app";
+const publicURL = "https://4fe7-2806-264-3400-ece-495-715d-b56e-3520.ngrok-free.app";
+
+// Ruta para almacenar el syncToken
+const SYNC_TOKEN_FILE = './syncToken.json';
 
 app.use(bodyParser.json());
 const credentials = require('./credentials.json');
@@ -18,6 +21,94 @@ const oauth2Client = new google.auth.OAuth2(
 );
 
 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+// Función para cargar el syncToken
+function loadSyncToken() {
+    if (fs.existsSync(SYNC_TOKEN_FILE)) {
+        return JSON.parse(fs.readFileSync(SYNC_TOKEN_FILE, 'utf8')).syncToken;
+    }
+    return null;
+}
+
+// Función para guardar el syncToken
+function saveSyncToken(syncToken) {
+    fs.writeFileSync(SYNC_TOKEN_FILE, JSON.stringify({ syncToken }), 'utf8');
+}
+
+// Función para limpiar el syncToken y datos locales
+function clearSyncData() {
+    if (fs.existsSync(SYNC_TOKEN_FILE)) {
+        fs.unlinkSync(SYNC_TOKEN_FILE);
+    }
+    console.log('Datos de sincronización limpiados.');
+}
+
+// Sincronización incremental/completa
+async function syncCalendarEvents() {
+    let syncToken = loadSyncToken(); // Cargar el syncToken
+    let pageToken = null;
+
+    do {
+        try {
+            const params = {
+                calendarId: 'primary',
+                maxResults: 10,
+                singleEvents: true,
+                pageToken: pageToken,
+            };
+
+            if (syncToken) {
+                params.syncToken = syncToken; // Sincronización incremental
+                console.log('Realizando sincronización incremental...');
+            } else {
+                console.log('Realizando sincronización completa...');
+            }
+
+            // Solicitar eventos
+            const response = await calendar.events.list(params);
+
+            // Procesar eventos
+            const events = response.data.items;
+            console.log("evento @@=>", events);
+            events.forEach(event => {
+                if (event.status === 'cancelled') {
+                    console.log(`Evento eliminado: ${event.id}`);
+                } else {
+                    console.log(`Evento sincronizado: ${event.summary}`);
+                }
+            });
+
+            // Manejar paginación
+            pageToken = response.data.nextPageToken;
+
+            // Guardar el nuevo syncToken al final de la última página
+            if (!pageToken) {
+                syncToken = response.data.nextSyncToken;
+                saveSyncToken(syncToken);
+                console.log('Nuevo syncToken guardado:', syncToken);
+            }
+        } catch (error) {
+            if (error.response && error.response.status === 410) {
+                console.log('Sync token inválido. Realizando sincronización completa...');
+                clearSyncData(); // Limpiar datos locales
+                syncToken = null; // Forzar sincronización completa
+            } else {
+                console.error('Error durante la sincronización:', error.message);
+                throw error;
+            }
+        }
+    } while (pageToken);
+}
+
+// Endpoint para manejar sincronización manual
+app.get('/sync', async (req, res) => {
+    try {
+        await syncCalendarEvents();
+        res.status(200).send('Sincronización completa.');
+    } catch (error) {
+        res.status(500).send(`Error durante la sincronización: ${error.message}`);
+    }
+});
 
 async function getEventDetails(resourceId) {
     try {
@@ -68,8 +159,8 @@ app.post('/notifications', async (req, res) => {
             console.log('Sincronización inicial recibida.');
         } else if (resourceState === 'exists') {
             console.log('Se creó o actualizó un recurso.');
-            const eventDetails = await getEventDetails(resourceId);
-            console.log('Detalles del evento:', eventDetails);
+            //const eventDetails = await getEventDetails(resourceId);
+            //console.log('Detalles del evento:', eventDetails);
         } else if (resourceState === 'not_exists') {
             console.log('Un recurso fue eliminado.');
             console.log('ID del recurso eliminado:', resourceId);
@@ -114,7 +205,7 @@ async function watchCalendar() {
     } catch (error) {
         console.error('Error al configurar el canal de notificaciones:', error);
     }
-}
+} 
 
 // Programa la renovación para cada 31 días
 schedule.scheduleJob('0 0 */31 * *', () => {
@@ -125,6 +216,7 @@ schedule.scheduleJob('0 0 */31 * *', () => {
 app.get('/', (req, res) => {
     const url = oauth2Client.generateAuthUrl({
         access_type:'offline',
+        prompt: 'consent',
         scope: 'https://www.googleapis.com/auth/calendar'
     });
 
@@ -140,9 +232,15 @@ app.get('/redirect', (req, res) => {
             return;
         }
 
+        if (!tokens.refresh_token) {
+            console.error('No se recibió un refresh_token. Revisa la configuración de acceso.');
+        } else {
+            console.log('Refresh token recibido:', tokens.refresh_token);
+        }
+
         oauth2Client.setCredentials(tokens);
 
-        fs.writeFileSync('tokens.json', JSON.stringify(tokens));
+        fs.writeFileSync('tokens.json', JSON.stringify(tokens, null, 2));
         console.log('Tokens guardados:', tokens);
 
         res.send('Successfully logged in');
@@ -199,5 +297,26 @@ app.listen(3001, () => {
     console.log('Servidor escuchando en http://localhost:3001');
     console.log(`Expuesto a través de Ngrok en: ${publicURL}`);
     loadTokens();
-    watchCalendar(); 
+    watchCalendar();
 });
+
+(async () => {
+    try {
+        console.log('Cargando tokens...');
+        loadTokens();
+        console.log('Verificando credenciales...');
+        console.log('Credenciales actuales:', oauth2Client.credentials);
+
+        if (!oauth2Client.credentials.access_token && oauth2Client.credentials.refresh_token) {
+            console.log('Renovando access token...');
+            const tokens = await oauth2Client.refreshAccessToken();
+            oauth2Client.setCredentials(tokens.credentials);
+            console.log('Access token renovado:', tokens.credentials.access_token);
+        }
+
+        console.log('Iniciando sincronización...');
+        await syncCalendarEvents();
+    } catch (error) {
+        console.error('Error durante la sincronización:', error.message);
+    }
+})();
