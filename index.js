@@ -2,11 +2,13 @@ require('dotenv').config();
 const express = require('express');
 const { google } = require('googleapis');
 const bodyParser = require('body-parser');
+const { v4: uuidv4 } = require('uuid');
+const axios = require('axios');
 const schedule = require('node-schedule');
 const fs = require('fs');
 const app = express();
 
-const publicURL = "https://4fe7-2806-264-3400-ece-495-715d-b56e-3520.ngrok-free.app";
+const publicURL = "https://5eea-177-227-56-238.ngrok-free.app";
 
 // Ruta para almacenar el syncToken
 const SYNC_TOKEN_FILE = './syncToken.json';
@@ -21,6 +23,16 @@ const oauth2Client = new google.auth.OAuth2(
 );
 
 const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+function loadTokens() {
+    if (fs.existsSync('tokens.json')) {
+        const tokens = JSON.parse(fs.readFileSync('tokens.json', 'utf-8'));
+        oauth2Client.setCredentials(tokens);
+        //console.log('Tokens cargados:', tokens);
+    } else {
+        console.error('No se encontraron tokens. Autentícate primero.');
+    }
+}
 
 // Función para cargar el syncToken
 function loadSyncToken() {
@@ -42,6 +54,7 @@ function clearSyncData() {
     }
     console.log('Datos de sincronización limpiados.');
 }
+
 
 // Sincronización incremental/completa
 async function syncCalendarEvents() {
@@ -69,7 +82,6 @@ async function syncCalendarEvents() {
 
             // Procesar eventos
             const events = response.data.items;
-            console.log("evento @@=>", events);
             events.forEach(event => {
                 if (event.status === 'cancelled') {
                     console.log(`Evento eliminado: ${event.id}`);
@@ -79,7 +91,7 @@ async function syncCalendarEvents() {
             });
 
             // Manejar paginación
-            pageToken = response.data.nextPageToken;
+            pageToken = response.data.nextPageToken || null;
 
             // Guardar el nuevo syncToken al final de la última página
             if (!pageToken) {
@@ -93,7 +105,7 @@ async function syncCalendarEvents() {
                 clearSyncData(); // Limpiar datos locales
                 syncToken = null; // Forzar sincronización completa
             } else {
-                console.error('Error durante la sincronización:', error.message);
+                console.error('Error durante la sincronización 2:', error.message);
                 throw error;
             }
         }
@@ -106,36 +118,21 @@ app.get('/sync', async (req, res) => {
         await syncCalendarEvents();
         res.status(200).send('Sincronización completa.');
     } catch (error) {
-        res.status(500).send(`Error durante la sincronización: ${error.message}`);
+        res.status(500).send(`Error durante la sincronización 1: ${error.message}`);
     }
 });
 
-async function getEventDetails(resourceId) {
+async function stopNotificationChannel(channelId, resourceId) {
     try {
-        const response = await calendar.events.list({
-            calendarId: 'primary',
-            maxResults: 10,
+        await calendar.channels.stop({
+            requestBody: {
+                id: channelId,
+                resourceId: resourceId,
+            },
         });
-
-        const event = response.data.items.find((item) => item.id === resourceId);
-
-        console.log("EVENTOS @=> ", response.data.items);
-
-        if (!event) {
-            console.log('No se encontró un evento con el resourceId:', resourceId);
-            return null;
-        }
-
-        return {
-            id: event.id,
-            summary: event.summary,
-            description: event.description,
-            start: event.start.dateTime || event.start.date, // Fecha/hora de inicio
-            end: event.end.dateTime || event.end.date, // Fecha/hora de fin
-        };
+        console.log(`Canal detenido: ${channelId}`);
     } catch (error) {
-        console.error('Error al obtener detalles del evento:', error);
-        throw error;
+        console.error(`Error al detener el canal ${channelId}:`, error);
     }
 }
 
@@ -144,74 +141,100 @@ app.post('/notifications', async (req, res) => {
     try {
         const headers = req.headers;
 
-        console.log('Estos son los headers @@=> ', headers);
+        //console.log("@@@=> headers: ", headers);
+        
         /*
-        console.log('Notificación recibida');
-        console.log('X-Goog-Channel-ID:', headers['x-goog-channel-id']);
-        console.log('X-Goog-Resource-ID:', headers['x-goog-resource-id']);
-        console.log('X-Goog-Resource-State:', headers['x-goog-resource-state']);
-        */
-
+        if(headers['x-goog-channel-id'] === "unique-channel-id-3c863dfb-5cdd-40be-a73e-8aca87e40029") {
+            console.log("Escuchando el canal con Id: unique-channel-id-3c863dfb-5cdd-40be-a73e-8aca87e40029");
+        } else {
+            console.log("No existe un especialista con este channel Id")
+            //res.sendStatus(200);
+            //loadTokens();
+            //await stopNotificationChannel(headers['x-goog-channel-id'], headers['x-goog-resource-id']);
+            //return;
+        } */
+        
         const resourceId = headers['x-goog-resource-id'];
         const resourceState = headers['x-goog-resource-state'];
 
         if (resourceState === 'sync') {
             console.log('Sincronización inicial recibida.');
+            /*
+            const response = await axios.post('http://localhost:3000/api/google/calendar/webhook', req.body, {
+                headers: {
+                    'x-goog-channel-expiration': req.headers['x-goog-channel-expiration'],
+                    'x-goog-channel-id': req.headers['x-goog-channel-id'],
+                    'x-goog-message-number': req.headers['x-goog-message-number'],
+                    'x-goog-resource-id': req.headers['x-goog-resource-id'],
+                    'x-goog-resource-state': req.headers['x-goog-resource-state'],
+                    'x-goog-resource-uri': req.headers['x-goog-resource-uri'],
+                    //'content-type': req.headers['content-type'], // Si estás enviando un cuerpo JSON
+                },
+            });
+            if(response) console.log("Conexion exitosa"); */
         } else if (resourceState === 'exists') {
             console.log('Se creó o actualizó un recurso.');
-            //const eventDetails = await getEventDetails(resourceId);
-            //console.log('Detalles del evento:', eventDetails);
+            await getEventDetails();
+            
+            /*
+            const response = await axios.post('http://localhost:3000/api/google/calendar/webhook', req.body, {
+                headers: {
+                    'x-goog-channel-expiration': req.headers['x-goog-channel-expiration'],
+                    'x-goog-channel-id': req.headers['x-goog-channel-id'],
+                    'x-goog-message-number': req.headers['x-goog-message-number'],
+                    'x-goog-resource-id': req.headers['x-goog-resource-id'],
+                    'x-goog-resource-state': req.headers['x-goog-resource-state'],
+                    'x-goog-resource-uri': req.headers['x-goog-resource-uri'],
+                    //'content-type': req.headers['content-type'], // Si estás enviando un cuerpo JSON
+                },
+            });
+            if(response) console.log("Un recurso fue actualizado"); */
+
         } else if (resourceState === 'not_exists') {
             console.log('Un recurso fue eliminado.');
             console.log('ID del recurso eliminado:', resourceId);
         }
 
         res.sendStatus(200);
+        //channelInitId.push(headers['x-goog-channel-id']);
+        //if(channelInitId.length > 1) res.sendStatus(200)
     } catch(error) {
         console.log("Ocurrio un problema en el endpoint de /notifications ==> ", error);
         res.sendStatus(500);
     }
 });
 
-function loadTokens() {
-    if (fs.existsSync('tokens.json')) {
-        const tokens = JSON.parse(fs.readFileSync('tokens.json', 'utf-8'));
-        oauth2Client.setCredentials(tokens);
-        console.log('Tokens cargados:', tokens);
-    } else {
-        console.error('No se encontraron tokens. Autentícate primero.');
-    }
-}
+// Función para crear un canal de notificaciones
+async function createNotificationChannel(calendarId) {
 
-// Función para configurar el canal de notificaciones
-async function watchCalendar() {
+    // Configuración del canal
+    const channel = {
+      id: `unique-channel-id-${uuidv4()}`,
+      type: 'web_hook',
+      address: `${publicURL}/notifications`,
+      expiration: Date.now() + (86400000 * 32) // expira en 32 dias
+    };
+  
     try {
-        if (!oauth2Client.credentials.access_token) {
-            console.error('No se ha configurado un access_token. Autentícate primero.');
-            throw new Error('No se ha configurado un access_token. Autentícate primero.');
-        }
-
-        const response = await calendar.events.watch({
-            calendarId: "primary",
-            requestBody: {
-                id: 'unique-channel-id-' + Date.now(),
-                type: 'web_hook',
-                address: `${publicURL}/notifications`, // URL de tu webhook (asegúrate de usar HTTPS)
-                //token: 'optional-verification-token', // Token opcional para verificar la fuente
-                expiration: Date.now() + (86400000 * 32), // Expira en 32 dias
-            },
-        });
-        console.log('Canal de notificaciones configurado:', response.data);
+      const response = await calendar.events.watch({
+        calendarId,
+        requestBody: channel,
+      });
+  
+      console.log('Canal de notificaciones creado:', response.data);
+      return response.data;
     } catch (error) {
-        console.error('Error al configurar el canal de notificaciones:', error);
+      console.error('Error al crear el canal:', error);
+      throw error;
     }
-} 
+  }
+ 
 
 // Programa la renovación para cada 31 días
-schedule.scheduleJob('0 0 */31 * *', () => {
-    console.log('Renovando el canal de notificaciones...');
-    watchCalendar();
-});
+//schedule.scheduleJob('0 0 */31 * *', () => {
+//    console.log('Renovando el canal de notificaciones...');
+//    watchCalendar();
+//});
 
 app.get('/', (req, res) => {
     const url = oauth2Client.generateAuthUrl({
@@ -293,14 +316,20 @@ app.get('/events', (req, res) => {
     });
 });
 
-app.listen(3001, () => {
-    console.log('Servidor escuchando en http://localhost:3001');
+app.listen(3000, () => {
+    console.log("Google Calendar Notifications");
+    console.log('Servidor escuchando en http://localhost:3000');
     console.log(`Expuesto a través de Ngrok en: ${publicURL}`);
-    loadTokens();
-    watchCalendar();
 });
 
+
 (async () => {
+    loadTokens();
+    await createNotificationChannel('primary');
+})();
+
+
+const getEventDetails = async () => {
     try {
         console.log('Cargando tokens...');
         loadTokens();
@@ -317,6 +346,6 @@ app.listen(3001, () => {
         console.log('Iniciando sincronización...');
         await syncCalendarEvents();
     } catch (error) {
-        console.error('Error durante la sincronización:', error.message);
+        console.error('Error durante la sincronización 3:', error.message);
     }
-})();
+};
