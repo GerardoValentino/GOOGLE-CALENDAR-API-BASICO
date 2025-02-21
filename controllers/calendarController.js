@@ -1,7 +1,10 @@
 const { google } = require('googleapis');
 const { oauth2Client } = require('../credentials/googleCredentials');
+const tokenController = require('./tokensController');
 
 exports.calendars = (req, res) => {
+    tokenController.loadTokens();
+
     const calendar = google.calendar({ 
         version: 'v3',
         auth: oauth2Client
@@ -21,11 +24,15 @@ exports.calendars = (req, res) => {
 }
 
 exports.events = (req, res) => {
+    tokenController.loadTokens();
+
     const calendarId = req.query.calendar ?? 'primary';
     const calendar = google.calendar({
         version: 'v3',
         auth: oauth2Client,
     });
+
+
 
     calendar.events.list({
         calendarId,
@@ -35,7 +42,7 @@ exports.events = (req, res) => {
         orderBy: 'startTime'
     }, (err, response) => {
         if(err) {
-            console.log('Cannot fetch events');
+            console.log('Cannot fetch events', err);
             res.send('Error');
             return;
         }

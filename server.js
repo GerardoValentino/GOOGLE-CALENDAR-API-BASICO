@@ -9,7 +9,7 @@ const port = process.env.PORT || 8000;
 (async () => {
     tokenController.loadTokens();
     await createNotificationChannel('primary');
-})(); */ 
+})(); */
 
 const server = app.listen(port, () => {
     console.log("Google Calendar Notifications");

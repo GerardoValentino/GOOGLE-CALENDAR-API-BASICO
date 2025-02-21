@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const app = express();
-const googleAuthRoutes = require('./routes/authGoogleRoutes');
 const googleCalendarRoutes = require('./routes/googleCalendarRoutes');
 const { syncCalendarEvents, getEventDetails, stopNotificationChannel } = require('./controllers/notificationsController');
 const tokenController = require('./controllers/tokensController');
@@ -56,8 +55,7 @@ app.post('/notifications', async (req, res) => {
 });
 
 
-app.use('/', googleAuthRoutes);
-app.use('/google-calendar/', googleCalendarRoutes);
+app.use('/', googleCalendarRoutes);
 
 app.all('*', (req, res, next) => {
     next(new AppError(`No se pudo encontrar ${req.originalUrl} en este servidor!`, 404));
